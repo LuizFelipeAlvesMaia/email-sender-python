@@ -3,8 +3,8 @@ name: Build and publish a docker image with the branch name as the tag
 on:
   push:
     branches:
-      - 'production'
-      - 'sandbox'
+      - 'main'
+      - 'develop'
   workflow_dispatch:
 
 env:
