@@ -2,3 +2,4 @@
 venv
 .env
 apis.sql
+users.sql
