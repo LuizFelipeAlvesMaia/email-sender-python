@@ -8,8 +8,14 @@ WORKDIR /app
 COPY requirements.txt requirements.txt
 COPY . .
 
-# Instale as dependências
-RUN apt update && apt install -y --no-install-recommends gcc libpq-dev cron
+# Instale as dependências do sistema necessárias
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    build-essential \
+    cron
+
+# Instale as dependências Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Comando para inicializar o cron
