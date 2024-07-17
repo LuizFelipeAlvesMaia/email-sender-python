@@ -10,12 +10,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Função para consultar a API e obter o updatedAt do changelog mais recente
-def get_latest_changelog_update():
+
+# Função para consultar a API e obter a data de criação do changelog mais recente
+def get_latest_changelog_update(api_key, doc_url, title):
     url = "https://dash.readme.com/api/v1/changelogs"
-    headers = {
-        "Authorization": "Basic cmRtZV94bjhzOWhkOTJmZmM0OTNlODI2ODEwNGQ1MWU4MTYyYzFkODRhNzJiY2JkODE0OTRlNjdhYTg5N2JkMGFiZmI4ZTEyOGI5Og=="
-    }
+    headers = {"Authorization": f"Basic {api_key}"}
     response = requests.get(url, headers=headers)
     changelogs = response.json()
 
@@ -23,13 +22,30 @@ def get_latest_changelog_update():
         print("Nenhum changelog encontrado.")
         return None
 
-    latest_changelog = changelogs[0]
-    update_at = latest_changelog.get("updatedAt")
-    update_at = datetime.strptime(update_at, "%Y-%m-%dT%H:%M:%S.%fZ")
-    return update_at
+    # Procura pelo changelog com o título especificado
+    latest_changelog = None
+    for changelog in changelogs:
+        if changelog.get("title") == title:
+            latest_changelog = changelog
+            break
+
+    if not latest_changelog:
+        print(f"Documentação '{doc_url}' não encontrada.")
+        return None
+
+    # Tenta obter updatedAt da resposta da API
+    updated_at = latest_changelog.get("updatedAt")
+
+    # Se updatedAt não estiver presente, retorna mensagem personalizada
+    if not updated_at:
+        return f"Documentação '{doc_url}' está desatualizada."
+
+    updated_at = datetime.strptime(updated_at, "%Y-%m-%dT%H:%M:%S.%fZ")
+    return updated_at
+
 
 # Função para atualizar o banco de dados com o novo changelog
-def update_changelog_in_db(update_at):
+def update_changelog_in_db(changelog_id, update_at):
     try:
         connection = psycopg2.connect(
             user=os.getenv("DB_USER"),
@@ -40,9 +56,17 @@ def update_changelog_in_db(update_at):
         )
         cursor = connection.cursor()
 
+        if isinstance(update_at, str):
+            print(update_at)
+            return None
+
+        # Consultar o URL da documentação no banco de dados
+        cursor.execute("SELECT doc_url FROM changelogs WHERE id = %s;", (changelog_id,))
+        doc_url = cursor.fetchone()[0]
+
         # Consultar a data mais recente no banco de dados
         cursor.execute(
-            "SELECT updated_at FROM changelogs ORDER BY updated_at DESC LIMIT 1;"
+            "SELECT updated_at FROM changelogs WHERE id = %s;", (changelog_id,)
         )
         record = cursor.fetchone()
 
@@ -53,27 +77,31 @@ def update_changelog_in_db(update_at):
                 # Atualizar o banco de dados com o novo changelog
                 cursor.execute(
                     "UPDATE changelogs SET updated_at = %s WHERE id = %s;",
-                    (update_at, 1),
+                    (update_at, changelog_id),
                 )
                 connection.commit()
-                print("Tabela de changelogs atualizada com sucesso.")
-                return True
+                print(
+                    f"Tabela de changelogs atualizada com sucesso para Documentação: {doc_url}."
+                )
+                return doc_url
             else:
-                print("A documentação ainda não foi atualizada.")
-                return False
+                print(f"A documentação: {doc_url} não teve alterações recentes.")
+                return None
         else:
             # Inserir o primeiro registro se não houver nenhum
             cursor.execute(
-                "INSERT INTO changelogs (id, updated_at) VALUES (%s, %s);",
-                (1, update_at),
+                "UPDATE changelogs SET updated_at = %s WHERE id = %s;",
+                (update_at, changelog_id),
             )
             connection.commit()
-            print("Tabela de changelogs criada com sucesso.")
-            return True
+            print(
+                f"Tabela de changelogs criada com sucesso para Documentação: {doc_url}."
+            )
+            return doc_url
 
     except (Exception, Error) as error:
         print("Erro ao conectar ao PostgreSQL:", error)
-        return False
+        return None
 
     finally:
         if connection:
@@ -81,9 +109,10 @@ def update_changelog_in_db(update_at):
             connection.close()
             print("Conexão ao PostgreSQL encerrada.")
 
+
 # Função para enviar email aos usuários
 def send_email(user_email, documentation_link):
-    sender_email = os.getenv("EMAIL_USER"
+    sender_email = os.getenv("EMAIL_USER")
     password = os.getenv("EMAIL_PASSWORD")
 
     message = MIMEMultipart()
@@ -91,16 +120,91 @@ def send_email(user_email, documentation_link):
     message["To"] = user_email
     message["Subject"] = "Atualização de Documentação"
     context = ssl.create_default_context()
-    body = f"""
-    Olá,
+    # Construir o conteúdo HTML do e-mail
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>Atualização de Documentação</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                background-color: #f4f4f4;
+                margin: 0;
+                padding: 0;
+            }}
+            .container {{
+        width: 100%;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #ffffff;
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            }}
+            .header {{
+        background-color: #007bff;
+        color: #ffffff;
+        text-align: center;
+        padding: 10px;
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+            }}
+            .content {{
+                padding: 20px;
+            }}
+            .footer {{
+                text-align: center;
+                padding-top: 10px;
+                color: #777777;
+                font-size: 12px;
+            }}
+            .button-container {{
+                text-align: center;
+                margin-top: 15px;
+            }}
+            .button {{
+                display: inline-block;
+                background-color: #007bff;
+                color: #ffffff;
+                text-decoration: none;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-weight: bold;
+            }}
+            .button:hover {{
+                background-color: #0056b3;
+            }}
+            .button a {{
+                color: #ffffff;
+                text-decoration: none;
+            }}
 
-    A documentação foi atualizada. Confira os detalhes aqui: {documentation_link}
-
-    Atenciosamente,
-    Sua Aplicação
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>Atualização de Documentação</h1>
+            </div>
+            <div class="content">
+                <p>Olá,</p>
+                <p>A documentação da nossa aplicação foi atualizada. Confira os detalhes abaixo:</p>
+                <p><a href="{documentation_link}" class="button">Ver Documentação</a></p>
+                <p>Atenciosamente,<br>QESH</br></p>
+            </div>
+            <div class="footer">
+                <p>Este é um e-mail automático. Por favor, não responda.</p>
+            </div>
+        </div>
+    </body>
+    </html>
     """
 
-    message.attach(MIMEText(body, "plain"))
+    message.attach(MIMEText(html_content, "html"))
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
@@ -110,41 +214,47 @@ def send_email(user_email, documentation_link):
     except Exception as e:
         print(f"Erro ao enviar email para {user_email}: {e}")
 
+
 # Função principal para coordenar o processo
 def main():
-    # Obter a data de atualização mais recente do changelog
-    update_at = get_latest_changelog_update()
+    try:
+        connection = psycopg2.connect(
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
+            database=os.getenv("DB_NAME"),
+        )
+        cursor = connection.cursor()
 
-    if update_at:
-        # Atualizar o banco de dados se houver um changelog mais recente
-        if update_changelog_in_db(update_at):
-            # Consultar usuários no banco de dados e enviar email de notificação
-            try:
-                connection = psycopg2.connect(
-                    user=os.getenv("DB_USER"),
-                    password=os.getenv("DB_PASSWORD"),
-                    host=os.getenv("DB_HOST"),
-                    port=os.getenv("DB_PORT"),
-                    database=os.getenv("DB_NAME"),
-                )
-                cursor = connection.cursor()
+        # Consultar todas as chaves de API e URLs de documentação
+        cursor.execute("SELECT id, api_keys, doc_url, title FROM changelogs;")
+        changelogs = cursor.fetchall()
 
-                cursor.execute("SELECT email FROM users;")
-                users = cursor.fetchall()
+        for changelog_id, api_key, doc_url, title in changelogs:
+            # Obter a data de atualização mais recente do changelog
+            update_at = get_latest_changelog_update(api_key, doc_url, title)
 
-                for user in users:
-                    user_email = user[0]
-                    documentation_link = "https://link_da_documentacao.com"  # Substituir pelo link real da documentação
-                    send_email(user_email, documentation_link)
+            if update_at:
+                # Atualizar o banco de dados se houver um changelog mais recente
+                if update_changelog_in_db(changelog_id, update_at):
+                    # Consultar usuários no banco de dados e enviar email de notificação
+                    cursor.execute("SELECT email FROM users;")
+                    users = cursor.fetchall()
 
-            except (Exception, Error) as error:
-                print("Erro ao conectar ao PostgreSQL:", error)
+                    for user in users:
+                        user_email = user[0]
+                        send_email(user_email, doc_url)
 
-            finally:
-                if connection:
-                    cursor.close()
-                    connection.close()
-                    print("Conexão ao PostgreSQL encerrada.")
+    except (Exception, Error) as error:
+        print("Erro ao conectar ao PostgreSQL:", error)
+
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
+            print("Conexão ao PostgreSQL encerrada.")
+
 
 # Executar o programa principal
 if __name__ == "__main__":
